@@ -1,0 +1,216 @@
+# Builds RetroVisionAI.exe on real Windows runners and publishes two variants:
+#
+#   RetroVisionAI-cpu-windows-x64.zip    torch CPU  (~1.3 GB zipped)
+#   RetroVisionAI-cuda-windows-x64.zip   torch CUDA (~2.6 GB zipped, split)
+#
+# Why two: a CUDA PyTorch bundle is ~3.5-4 GB unpacked, which exceeds GitHub's
+# 2 GB release-asset limit and makes the artifact awkward to download. The CPU
+# build works on every Windows machine and is the small one; the CUDA build is
+# for people who want speed and accept a large download.
+#
+# Trigger:  Actions -> "Build Windows EXE" -> Run workflow
+# Result :  Artifacts on the run page / assets on a tagged release
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: "Which build to produce"
+        type: choice
+        options: [both, cpu, cuda]
+        default: both
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - id: set
+        shell: bash
+        run: |
+          # Job-level `if` cannot see the matrix context, so the selection is
+          # resolved here and passed to the build job as a real matrix.
+          want="${{ inputs.variant }}"
+          if [ -z "$want" ]; then want="both"; fi
+          cpu='{"variant":"cpu","label":"cpu","torch":"torch==2.4.1 torchvision==0.19.1 --index-url https://download.pytorch.org/whl/cpu"}'
+          cuda='{"variant":"cuda","label":"cuda","torch":"torch==2.4.1 torchvision==0.19.1 --index-url https://download.pytorch.org/whl/cu121"}'
+          case "$want" in
+            cpu)  json="[$cpu]" ;;
+            cuda) json="[$cuda]" ;;
+            *)    json="[$cpu,$cuda]" ;;
+          esac
+          echo "matrix={\"include\":$json}" >> "$GITHUB_OUTPUT"
+          echo "selected: $json"
+
+  build:
+    needs: plan
+    runs-on: windows-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free up disk space
+        shell: pwsh
+        # The CUDA torch bundle needs several GB more than a stock runner has.
+        run: |
+          foreach ($p in @(
+              "C:\Program Files\dotnet",
+              "C:\Program Files\Android",
+              "C:\Program Files (x86)\Android",
+              "C:\hostedtoolcache\Ruby",
+              "C:\hostedtoolcache\Java",
+              "C:\hostedtoolcache\node"
+          )) {
+            if (Test-Path $p) { Remove-Item -Recurse -Force $p -ErrorAction SilentlyContinue }
+          }
+          Get-PSDrive C | Select-Object Used,Free | Format-List
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install PyTorch (${{ matrix.label }})
+        run: |
+          python -m pip install --upgrade pip wheel setuptools
+          pip install ${{ matrix.torch }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt "pyinstaller>=6.14,<7"
+
+      - name: Install FFmpeg (the test-suite uses it)
+        shell: pwsh
+        run: |
+          choco install ffmpeg -y --no-progress
+          ffmpeg -version | Select-Object -First 1
+
+      - name: Generate icons
+        run: python scripts/make_icons.py
+
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        # The integration test downloads weights and runs minutes of CPU
+        # inference; it is covered locally and skipped in CI.
+        run: python -m pytest tests -q --ignore=tests/test_pipeline_integration.py
+
+      - name: Build EXE
+        run: pyinstaller RetroVisionAI.spec --noconfirm --clean
+
+      - name: Verify the frozen build (console sibling)
+        shell: pwsh
+        # A windowed EXE has no stdout, so --check there prints nothing.
+        # retrovision-cli.exe is the identical frozen code with a real console.
+        run: |
+          $cli = "dist\RetroVisionAI\retrovision-cli.exe"
+          $gui = "dist\RetroVisionAI\RetroVisionAI.exe"
+          if (-not (Test-Path $gui)) { throw "GUI binary missing" }
+          if (-not (Test-Path $cli)) { throw "console build missing" }
+
+          $ver = & $cli --version
+          Write-Host "version: $ver"
+          if ($ver -notmatch "RetroVision") { throw "unexpected --version output" }
+
+          $out = & $cli --check
+          $out | Write-Host
+          if ($LASTEXITCODE -ne 0) { throw "--check exited $LASTEXITCODE" }
+          if ($out -notmatch "RESULT\s*:\s*ready") { throw "--check did not report ready" }
+
+      - name: Smoke-test the GUI binary
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist\RetroVisionAI\RetroVisionAI.exe" -PassThru
+          Start-Sleep -Seconds 20
+          if ($p.HasExited) { throw "GUI exited early with code $($p.ExitCode)" }
+          Write-Host "GUI alive after 20s - no import or resource failures"
+          Stop-Process -Id $p.Id -Force
+
+      - name: Prepare distribution folder
+        shell: pwsh
+        run: |
+          $out = "dist\RetroVisionAI"
+          Copy-Item config.json "$out\config.json" -Force
+          foreach ($d in "models","output","temp","logs","bin") {
+            New-Item -ItemType Directory -Force -Path "$out\$d" | Out-Null
+          }
+          Copy-Item README.md, DELIVERY.md, BUILD-THE-EXE.md "$out\" -Force -ErrorAction SilentlyContinue
+          Copy-Item docs "$out\docs" -Recurse -Force -ErrorAction SilentlyContinue
+          @"
+          RetroVision AI ${{ matrix.label }} build (${{ github.ref_name }})
+
+          Run RetroVisionAI.exe
+            * retrovision-cli.exe  - same app with a console (--check / --quick)
+            * models/  -> open "AI Model Manager" in the app to download weights
+            * FFmpeg  -> install on PATH, or put ffmpeg.exe + ffprobe.exe in bin\
+          "@ | Set-Content "$out\READ-ME-FIRST.txt"
+
+      - name: Report size
+        shell: pwsh
+        run: |
+          $b = (Get-ChildItem dist\RetroVisionAI -Recurse -File | Measure-Object Length -Sum).Sum
+          Write-Host ("bundle: {0:N2} GB" -f ($b / 1GB))
+
+      - name: Zip the bundle
+        shell: pwsh
+        run: |
+          $name = "RetroVisionAI-${{ matrix.label }}-windows-x64.zip"
+          Compress-Archive -Path dist\RetroVisionAI\* -CompressionLevel Optimal -DestinationPath $name
+          $z = Get-Item $name
+          Write-Host ("zip: {0:N0} MB" -f ($z.Length / 1MB))
+
+      - name: Split if the zip exceeds the 2 GB asset limit
+        shell: pwsh
+        run: |
+          $z = Get-Item "RetroVisionAI-${{ matrix.label }}-windows-x64.zip"
+          if ($z.Length -gt 1900MB) {
+            Write-Host "zip exceeds 1.9 GB - splitting into 1500 MB parts"
+            $i = 0; $buf = New-Object byte[] (1500MB); $fs = [IO.File]::OpenRead($z.FullName)
+            try {
+              while (($n = $fs.Read($buf, 0, $buf.Length)) -gt 0) {
+                $i++
+                $part = "$($z.FullName).part{0:D2}" -f $i
+                [IO.File]::WriteAllBytes($part, $buf[0..($n-1)])
+              }
+            } finally { $fs.Close() }
+            Remove-Item $z.FullName
+            Write-Host "wrote $i part(s)"
+          } else { Write-Host "single-file zip - no split needed" }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RetroVisionAI-${{ matrix.label }}-windows
+          path: |
+            RetroVisionAI-${{ matrix.label }}-windows-x64.zip*
+            dist/RetroVisionAI/READ-ME-FIRST.txt
+          retention-days: 30
+          compression-level: 0
+
+      - name: Attach to release (tags only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: RetroVisionAI-*-windows-x64.zip*
+          fail_on_unmatched_files: false
+          body: |
+            RetroVision AI ${{ github.ref_name }} — Windows x64
+
+            **Unzip anywhere and run `RetroVisionAI.exe`.**
+            * `retrovision-cli.exe` — same app with a console, for `--check` / `--quick`
+            * Model weights are **not** bundled — open **AI Model Manager** to download them
+            * FFmpeg must be on `PATH`, or put `ffmpeg.exe` + `ffprobe.exe` in `bin\`
+            * If the download is split into `.partNN` files, concatenate them first:
+              `copy /b file.zip.part* file.zip`
