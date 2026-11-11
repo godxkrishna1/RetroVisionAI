@@ -1,0 +1,43 @@
+# =============================================================================
+#  RetroVision AI - Python dependencies
+#  Target platform : Windows 10/11 x64 (NVIDIA GPU recommended)
+#  Target Python   : 3.10 or 3.11  (3.12 also works with newer PyTorch)
+# =============================================================================
+#
+# IMPORTANT - install PyTorch FIRST, with the CUDA 12.1 build, so that the
+# wheels below resolve against the GPU-enabled torch. Example (CUDA 12.1):
+#
+#   pip install torch==2.4.1 torchvision==0.19.1 --index-url https://download.pytorch.org/whl/cu121
+#
+# For a CPU-only machine (works, but slowly):
+#
+#   pip install torch==2.4.1 torchvision==0.19.1 --index-url https://download.pytorch.org/whl/cpu
+#
+# Then:  pip install -r requirements.txt
+# -----------------------------------------------------------------------------
+
+# --- Desktop UI -------------------------------------------------------------
+PySide6>=6.6,<6.10          # Qt for Python (LGPLv3 / commercial Qt licence)
+PySide6-Essentials>=6.6,<6.10
+
+# --- AI inference -----------------------------------------------------------
+# torch / torchvision are installed separately (see header). Pin for reference:
+#   torch==2.4.1
+#   torchvision==0.19.1
+# Do NOT list them here - a plain `pip install -r` would pull CPU wheels
+# from PyPI and silently drop CUDA support.
+numpy>=1.24,<3.0
+opencv-python>=4.8,<5.0     # video frame I/O, colour conversions, filtering
+Pillow>=10.0,<14.0          # image encode/decode for previews & thumbnails
+
+# --- System helpers ---------------------------------------------------------
+psutil>=5.9                 # process / RAM telemetry for the GPU monitor
+requests>=2.31,<3.0         # model downloads (Model Manager)
+packaging>=23.0             # version comparison
+
+# --- Packaging (Windows EXE) -----------------------------------------------
+# pyinstaller>=6.6          # uncomment / install when building the EXE
+
+# --- Development / test -----------------------------------------------------
+pytest>=8.0
+pytest-qt>=4.4

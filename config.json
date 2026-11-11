@@ -1,0 +1,86 @@
+{
+  "app": {
+    "name": "RetroVision AI",
+    "version": "1.0.0",
+    "first_run_complete": false,
+    "theme": "dark",
+    "language": "en"
+  },
+  "paths": {
+    "models_dir": "models",
+    "output_dir": "output",
+    "temp_dir": "temp",
+    "logs_dir": "logs",
+    "ffmpeg_path": "",
+    "ffprobe_path": ""
+  },
+  "processing": {
+    "device": "auto",
+    "tile_size": 0,
+    "tile_pad": 16,
+    "precision": "fp16",
+    "cpu_threads": 0,
+    "keep_temp_frames": false,
+    "resume_enabled": true,
+    "max_batch_frames": 8,
+    "vram_headroom_mb": 1024,
+    "temp_drive_min_free_gb": 2.0
+  },
+  "enhancement": {
+    "target_resolution": "1080p",
+    "ai_model": "realesrgan_x2plus",
+    "use_super_resolution": true,
+    "use_face_restoration": false,
+    "face_strength": 0.8,
+    "use_denoise": true,
+    "denoise_strength": "medium",
+    "use_deblur": false,
+    "deblur_strength": "medium",
+    "use_sharpen": false,
+    "sharpen_strength": "medium",
+    "use_color_restore": true,
+    "color_strength": "medium",
+    "use_brightness_fix": false,
+    "brightness_strength": "medium",
+    "use_contrast_fix": false,
+    "contrast_strength": "medium",
+    "use_grain_reduction": false,
+    "grain_strength": "medium",
+    "use_scratch_reduction": false,
+    "scratch_strength": "medium",
+    "use_interpolation": false,
+    "interpolation_factor": 2,
+    "interpolation_model": "rife47",
+    "use_temporal_restore": false,
+    "temporal_window": 5
+  },
+  "export": {
+    "codec": "h264",
+    "encoder": "auto",
+    "quality": "high",
+    "crf": 18,
+    "bitrate_kbps": 0,
+    "preset": "slow",
+    "pixel_format": "yuv420p",
+    "audio_codec": "aac",
+    "audio_bitrate_kbps": 192,
+    "copy_audio_when_possible": true,
+    "container": "mp4"
+  },
+  "ui": {
+    "window_width": 1440,
+    "window_height": 900,
+    "sidebar_collapsed": false,
+    "show_welcome_on_start": true,
+    "recent_projects_limit": 8
+  },
+  "gpu": {
+    "monitor_interval_ms": 1000,
+    "enable_cuda_memory_pool": true
+  },
+  "downloads": {
+    "retries": 3,
+    "chunk_size_kb": 256,
+    "timeout_seconds": 30
+  }
+}
